@@ -27,7 +27,6 @@ data/raw/dev.csv
 data/raw/test.csv
 data/raw/train.csv
 data/raw/val.csv
-data/processed/
 
 # ===== Trained models / artifacts =====
 models/*.joblib

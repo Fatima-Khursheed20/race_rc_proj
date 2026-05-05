@@ -1,0 +1,433 @@
+"""Preprocessing and feature engineering pipeline for RACE RC project.
+
+This module does four major things:
+1. Load and clean raw train/dev/test CSV files.
+2. Expand each MCQ row into 4 binary verification examples.
+3. Build handcrafted lexical features for each example.
+4. Build and save one-hot text features and labels for model training.
+
+Run from project root:
+	python src/preprocessing.py
+
+Optional arguments:
+	python src/preprocessing.py --raw-dir data/raw --processed-dir data/processed
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence, Tuple
+
+import joblib
+import numpy as np
+import pandas as pd
+from scipy import sparse
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+# Core schema used by the project dataset.
+OPTION_COLS = ["A", "B", "C", "D"]
+TEXT_COLS = ["article", "question", "A", "B", "C", "D"]
+REQUIRED_COLS = ["article", "question", "A", "B", "C", "D", "answer"]
+
+
+def clean_text(text: object) -> str:
+	"""Normalize text in a lightweight way suitable for bag-of-words models.
+
+	Steps:
+	1) lowercase
+	2) remove URLs/emails
+	3) remove punctuation (keep apostrophes)
+	4) collapse repeated whitespace
+	"""
+	value = str(text).lower()
+	value = re.sub(r"http[s]?://\S+|www\.\S+|[\w\.-]+@[\w\.-]+", " ", value)
+	value = re.sub(r"[^\w\s']", " ", value)
+	value = re.sub(r"\s+", " ", value).strip()
+	return value
+
+
+def tokenize_set(text: object) -> set[str]:
+	"""Tokenize text into a lowercase set of alphanumeric words."""
+	return set(re.findall(r"\b\w+\b", str(text).lower()))
+
+
+def question_type_flags(question: object) -> Dict[str, int]:
+	"""Return one-hot style flags for question shape.
+
+	We keep the simple WH classes, but we also add a few extra indicators that
+	help with the large `Other` bucket:
+	- `other`: question does not start with a WH word
+	- `has_blank`: cloze-style stem with an underscore blank
+	- `starts_with_aux`: starts with an auxiliary verb like do/does/is/can
+	- `starts_with_article`: starts with a/an/the, often used in fragment-like stems
+	"""
+	raw = str(question).strip().lower()
+	first = raw.split()[0] if raw else ""
+	wh_words = {"who", "what", "where", "when", "why", "how", "which"}
+	starts_with_wh = int(any(first.startswith(word) for word in wh_words))
+	starts_with_aux = int(first in {"is", "are", "was", "were", "do", "does", "did", "can", "could", "should", "would", "will", "has", "have", "had"})
+	starts_with_article = int(first in {"a", "an", "the"})
+	has_blank = int("___" in raw or "____" in raw or "__" in raw)
+	other = int(not starts_with_wh)
+	return {
+		"who": int(first.startswith("who")),
+		"what": int(first.startswith("what")),
+		"where": int(first.startswith("where")),
+		"when": int(first.startswith("when")),
+		"why": int(first.startswith("why")),
+		"how": int(first.startswith("how")),
+		"which": int(first.startswith("which")),
+		"other": other,
+		"starts_with_wh": starts_with_wh,
+		"has_blank": has_blank,
+		"starts_with_aux": starts_with_aux,
+		"starts_with_article": starts_with_article,
+	}
+
+
+def question_subtype(question: object) -> str:
+	"""Categorize a question into an explicit subtype for downstream use.
+
+	Subtypes:
+	- wh_who, wh_what, wh_where, wh_when, wh_why, wh_how, wh_which:
+	  Questions beginning with WH-words. Useful for WH-answer templates.
+	- other_cloze:
+	  Non-WH questions containing blank markers (underscores). These are
+	  fill-in-the-blank style questions. Useful for cloze templates.
+	- other_generic:
+	  Remaining "Other" questions (e.g., "Does X...?", "The main idea...", etc).
+	  Fallback type for inference-style or open-ended comprehension questions.
+
+	This mapping helps both the model learn cleaner decision boundaries and
+	the question-generation stage select appropriate question templates.
+	"""
+	raw = str(question).strip().lower()
+	first = raw.split()[0] if raw else ""
+
+	# Map WH-words to their subtypes.
+	wh_mapping = {
+		"who": "wh_who",
+		"what": "wh_what",
+		"where": "wh_where",
+		"when": "wh_when",
+		"why": "wh_why",
+		"how": "wh_how",
+		"which": "wh_which",
+	}
+	for wh_word, subtype in wh_mapping.items():
+		if first.startswith(wh_word):
+			return subtype
+
+	# Check for cloze-style blanks (underscore markers).
+	if "___" in raw or "____" in raw or "__" in raw:
+		return "other_cloze"
+
+	# Remaining "Other" questions (including aux-verb starts, fragments, etc).
+	return "other_generic"
+
+
+def validate_columns(df: pd.DataFrame, split_name: str) -> None:
+	"""Fail early if required columns are missing."""
+	missing = [col for col in REQUIRED_COLS if col not in df.columns]
+	if missing:
+		raise ValueError(f"{split_name} is missing required columns: {missing}")
+
+
+def read_split_csv(path: Path, split_name: str) -> pd.DataFrame:
+	"""Read a split CSV and drop accidental unnamed columns."""
+	if not path.exists():
+		raise FileNotFoundError(f"Missing {split_name} file: {path}")
+
+	df = pd.read_csv(path)
+	df.drop(
+		columns=[col for col in df.columns if str(col).startswith("Unnamed")],
+		inplace=True,
+		errors="ignore",
+	)
+	validate_columns(df, split_name)
+	return df
+
+
+def load_raw_splits(raw_dir: Path) -> Dict[str, pd.DataFrame]:
+	"""Load train/dev/test (or val) splits from data/raw."""
+	train_path = raw_dir / "train.csv"
+	dev_path = raw_dir / "dev.csv"
+	test_path = raw_dir / "test.csv"
+
+	# Some datasets use val.csv instead of dev.csv.
+	if not dev_path.exists() and (raw_dir / "val.csv").exists():
+		dev_path = raw_dir / "val.csv"
+
+	return {
+		"train": read_split_csv(train_path, "train"),
+		"dev": read_split_csv(dev_path, "dev"),
+		"test": read_split_csv(test_path, "test"),
+	}
+
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+	"""Apply cleaning to all text-bearing columns used in training."""
+	out = df.copy()
+	for col in TEXT_COLS:
+		out[col] = out[col].fillna("").map(clean_text)
+	out["answer"] = out["answer"].astype(str).str.strip()
+	return out
+
+
+def compute_lexical_features(article: str, question: str, option: str) -> Dict[str, float]:
+	"""Build dense lexical features from one (article, question, option) triple.
+
+	These are cheap, interpretable signals that complement sparse one-hot vectors.
+	"""
+	art_tok = tokenize_set(article)
+	q_tok = tokenize_set(question)
+	opt_tok = tokenize_set(option)
+
+	opt_len = len(option.split())
+	art_len = len(article.split())
+	q_len = len(question.split())
+
+	art_overlap = len(art_tok & opt_tok) / max(len(opt_tok), 1)
+	q_overlap = len(q_tok & opt_tok) / max(len(opt_tok), 1)
+
+	features: Dict[str, float] = {
+		"art_overlap": art_overlap,
+		"q_overlap": q_overlap,
+		"art_exact": float(option in article),
+		"q_exact": float(option in question),
+		"opt_len": float(opt_len),
+		"art_len": float(art_len),
+		"q_len": float(q_len),
+		"unique_words": float(len(opt_tok)),
+		"art_len_ratio": float(opt_len / max(art_len, 1)),
+	}
+	features.update({k: float(v) for k, v in question_type_flags(question).items()})
+	return features
+
+
+def expand_for_verification(
+	df: pd.DataFrame,
+	max_article_words: int = 500,
+) -> Tuple[List[str], np.ndarray, np.ndarray, np.ndarray, List[str]]:
+	"""Expand each row into 4 binary examples for answer verification.
+
+	Returns:
+	- combined_texts: one text per option, format: article [SEP] question [SEP] option
+	- labels: 1 if option is correct, else 0
+	- lexical_matrix: dense lexical features (n_examples, n_features)
+	- row_ids: index of original question row for grouping (used for EM later)
+	- lexical_feature_names: stable column order for lexical matrix
+	"""
+	combined_texts: List[str] = []
+	labels: List[int] = []
+	lexical_rows: List[Dict[str, float]] = []
+	row_ids: List[int] = []
+
+	for row_idx, row in df.iterrows():
+		article = " ".join(str(row["article"]).split()[:max_article_words])
+		question = str(row["question"])
+		answer = str(row["answer"]).strip()
+
+		for opt in OPTION_COLS:
+			option = str(row[opt])
+			combined = f"{article} [SEP] {question} [SEP] {option}"
+			label = 1 if opt == answer else 0
+
+			combined_texts.append(combined)
+			labels.append(label)
+			lexical_rows.append(compute_lexical_features(article, question, option))
+			row_ids.append(int(row_idx))
+
+	lexical_df = pd.DataFrame(lexical_rows)
+	lexical_feature_names = list(lexical_df.columns)
+
+	return (
+		combined_texts,
+		np.asarray(labels, dtype=np.int8),
+		lexical_df.to_numpy(dtype=np.float32),
+		np.asarray(row_ids, dtype=np.int32),
+		lexical_feature_names,
+	)
+
+
+def build_vectorizer(max_features: int = 10_000, min_df: int = 2) -> CountVectorizer:
+	"""Create one-hot CountVectorizer with project defaults."""
+	return CountVectorizer(
+		binary=True,
+		max_features=max_features,
+		min_df=min_df,
+		ngram_range=(1, 1),
+		lowercase=True,
+		token_pattern=r"\b\w+\b",
+	)
+
+
+def save_split_artifacts(
+	processed_dir: Path,
+	split_name: str,
+	x_ohe: sparse.spmatrix,
+	x_lex: np.ndarray,
+	y: np.ndarray,
+	row_ids: np.ndarray,
+) -> None:
+	"""Persist all per-split arrays/matrices to data/processed."""
+	sparse.save_npz(processed_dir / f"X_{split_name}_ohe.npz", x_ohe)
+	np.save(processed_dir / f"X_{split_name}_lexical.npy", x_lex)
+	np.save(processed_dir / f"y_{split_name}.npy", y)
+	np.save(processed_dir / f"row_ids_{split_name}.npy", row_ids)
+
+
+def run_pipeline(
+	raw_dir: Path,
+	processed_dir: Path,
+	vectorizer_out: Path,
+	max_article_words: int = 500,
+	max_features: int = 10_000,
+	min_df: int = 2,
+) -> None:
+	"""Run the full preprocessing pipeline end-to-end."""
+	processed_dir.mkdir(parents=True, exist_ok=True)
+	vectorizer_out.parent.mkdir(parents=True, exist_ok=True)
+
+	# 1) Load and clean raw data.
+	raw_splits = load_raw_splits(raw_dir)
+	clean_splits = {name: clean_dataframe(df) for name, df in raw_splits.items()}
+
+	# 2) Expand each split into binary verification examples + lexical features.
+	expanded = {}
+	lexical_feature_names: List[str] | None = None
+
+	for split_name, df in clean_splits.items():
+		combined_texts, y, x_lex, row_ids, lex_names = expand_for_verification(
+			df,
+			max_article_words=max_article_words,
+		)
+		expanded[split_name] = {
+			"texts": combined_texts,
+			"y": y,
+			"x_lex": x_lex,
+			"row_ids": row_ids,
+		}
+		if lexical_feature_names is None:
+			lexical_feature_names = lex_names
+
+	# 3) Fit vectorizer on train ONLY (avoids leakage), transform all splits.
+	vectorizer = build_vectorizer(max_features=max_features, min_df=min_df)
+	x_train_ohe = vectorizer.fit_transform(expanded["train"]["texts"])
+	x_dev_ohe = vectorizer.transform(expanded["dev"]["texts"])
+	x_test_ohe = vectorizer.transform(expanded["test"]["texts"])
+
+	# 4) Save vectorizer and split artifacts.
+	joblib.dump(vectorizer, vectorizer_out)
+	save_split_artifacts(
+		processed_dir,
+		"train",
+		x_train_ohe,
+		expanded["train"]["x_lex"],
+		expanded["train"]["y"],
+		expanded["train"]["row_ids"],
+	)
+	save_split_artifacts(
+		processed_dir,
+		"dev",
+		x_dev_ohe,
+		expanded["dev"]["x_lex"],
+		expanded["dev"]["y"],
+		expanded["dev"]["row_ids"],
+	)
+	save_split_artifacts(
+		processed_dir,
+		"test",
+		x_test_ohe,
+		expanded["test"]["x_lex"],
+		expanded["test"]["y"],
+		expanded["test"]["row_ids"],
+	)
+
+	# 5) Save metadata/config for reproducibility.
+	metadata = {
+		"max_article_words": max_article_words,
+		"max_features": max_features,
+		"min_df": min_df,
+		"option_cols": OPTION_COLS,
+		"text_cols": TEXT_COLS,
+		"lexical_feature_names": lexical_feature_names or [],
+		"num_train_examples": int(len(expanded["train"]["y"])),
+		"num_dev_examples": int(len(expanded["dev"]["y"])),
+		"num_test_examples": int(len(expanded["test"]["y"])),
+		"train_positive_ratio": float(expanded["train"]["y"].mean()),
+		"vocab_size": int(len(vectorizer.vocabulary_)),
+		"raw_dir": str(raw_dir),
+		"processed_dir": str(processed_dir),
+		"vectorizer_path": str(vectorizer_out),
+	}
+
+	with (processed_dir / "preprocessing_config.json").open("w", encoding="utf-8") as fh:
+		json.dump(metadata, fh, indent=2)
+
+	print("Preprocessing complete.")
+	print(f"Train examples: {metadata['num_train_examples']:,}")
+	print(f"Dev examples:   {metadata['num_dev_examples']:,}")
+	print(f"Test examples:  {metadata['num_test_examples']:,}")
+	print(f"Train positive ratio: {metadata['train_positive_ratio']:.4f}")
+	print(f"Vocabulary size: {metadata['vocab_size']:,}")
+	print(f"Saved config: {processed_dir / 'preprocessing_config.json'}")
+
+
+def parse_args() -> argparse.Namespace:
+	"""CLI arguments for flexible local/Colab usage."""
+	parser = argparse.ArgumentParser(description="RACE preprocessing + feature engineering")
+	parser.add_argument(
+		"--raw-dir",
+		type=Path,
+		default=Path("data/raw"),
+		help="Directory containing train/dev/test CSV files",
+	)
+	parser.add_argument(
+		"--processed-dir",
+		type=Path,
+		default=Path("data/processed"),
+		help="Directory where processed outputs are saved",
+	)
+	parser.add_argument(
+		"--vectorizer-out",
+		type=Path,
+		default=Path("models/model_a/traditional/ohe_vectorizer.pkl"),
+		help="Path to save fitted CountVectorizer",
+	)
+	parser.add_argument(
+		"--max-article-words",
+		type=int,
+		default=500,
+		help="Truncate article to first N words during verification expansion",
+	)
+	parser.add_argument(
+		"--max-features",
+		type=int,
+		default=10_000,
+		help="Vocabulary size cap for one-hot vectorizer",
+	)
+	parser.add_argument(
+		"--min-df",
+		type=int,
+		default=2,
+		help="Minimum document frequency for one-hot vocabulary",
+	)
+	return parser.parse_args()
+
+
+if __name__ == "__main__":
+	args = parse_args()
+	run_pipeline(
+		raw_dir=args.raw_dir,
+		processed_dir=args.processed_dir,
+		vectorizer_out=args.vectorizer_out,
+		max_article_words=args.max_article_words,
+		max_features=args.max_features,
+		min_df=args.min_df,
+	)
+
