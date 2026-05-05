@@ -4,7 +4,7 @@ This module does four major things:
 1. Load and clean raw train/dev/test CSV files.
 2. Expand each MCQ row into 4 binary verification examples.
 3. Build handcrafted lexical features for each example.
-4. Build and save one-hot text features and labels for model training.
+4. Build and save one-hot text features AND TF-IDF features + labels for model training.
 
 Run from project root:
 	python src/preprocessing.py
@@ -25,7 +25,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer  # [CHANGE 1] Import TfidfVectorizer
 
 
 # Core schema used by the project dataset.
@@ -266,6 +266,47 @@ def build_vectorizer(max_features: int = 10_000, min_df: int = 2) -> CountVector
 	)
 
 
+# [CHANGE 2] New function: builds a TF-IDF vectorizer with project-recommended settings.
+# This is separate from build_vectorizer() so either can be used independently.
+# Key differences from OHE (CountVectorizer):
+#   - binary=False: TF-IDF gives float weights, not 0/1. Words that appear more
+#     often in a specific example get higher weight.
+#   - sublinear_tf=True: applies log(1+TF) instead of raw TF. This prevents very
+#     frequent words in a long article from completely dominating the vector.
+#   - stop_words='english': removes words like "the", "is", "a" that contribute
+#     zero information. OHE doesn't do this by default; TF-IDF benefits more from it
+#     because those stopwords would otherwise get artificially high TF scores.
+#   - max_df=0.95: ignores terms appearing in >95% of all examples (near-stopwords
+#     that the English list misses). OHE has no equivalent.
+#   - norm='l2': normalizes every vector to unit length. This makes cosine similarity
+#     correct without any extra step, and keeps features on the same scale.
+def build_tfidf_vectorizer(max_features: int = 10_000, min_df: int = 2) -> TfidfVectorizer:
+	"""Create TF-IDF vectorizer with project-recommended settings.
+
+	Why TF-IDF vs OHE (CountVectorizer binary=True)?
+	- OHE: 1 if word present, 0 if absent. Treats all present words equally.
+	- TF-IDF: gives higher weight to words that are FREQUENT in THIS example
+	  but RARE across ALL examples. More discriminative.
+
+	These settings mirror the TF-IDF manual recommendations for RACE:
+	- sublinear_tf=True: dampens effect of very frequent terms via log(1+tf).
+	- stop_words='english': removes 318 common English stopwords.
+	- max_df=0.95: removes near-universal terms the stop list misses.
+	- norm='l2': unit-normalizes each row so cosine similarity works out-of-the-box.
+	"""
+	return TfidfVectorizer(
+		max_features=max_features,
+		min_df=min_df,
+		ngram_range=(1, 1),          # unigrams; change to (1,2) for bigrams [BONUS]
+		stop_words="english",        # remove common English stopwords
+		sublinear_tf=True,           # use log(1 + tf) instead of raw tf
+		max_df=0.95,                 # ignore terms in >95% of documents
+		norm="l2",                   # L2-normalize each row vector
+		lowercase=True,
+		token_pattern=r"\b\w+\b",
+	)
+
+
 def compute_cosine_similarity_features(
 	x_ohe: sparse.spmatrix,
 	row_ids: np.ndarray,
@@ -316,7 +357,7 @@ def compute_cosine_similarity_features(
 		row_vectors = x_ohe[same_row_indices]
 		if len(same_row_indices) > 0:
 			# Cosine similarity between this example and mean of group
-			mean_vector = np.asarray(row_vectors.mean(axis=0))
+			mean_vector = np.asarray(row_vectors.mean(axis=0)).flatten()
 			current_vector = np.asarray(x_ohe[idx].toarray().flatten())
 
 			# Compute cosine similarity manually
@@ -343,12 +384,23 @@ def save_split_artifacts(
 	x_lex: np.ndarray,
 	y: np.ndarray,
 	row_ids: np.ndarray,
+	x_tfidf: sparse.spmatrix | None = None,  # [CHANGE 3] New optional parameter for TF-IDF matrix
 ) -> None:
-	"""Persist all per-split arrays/matrices to data/processed."""
+	"""Persist all per-split arrays/matrices to data/processed.
+
+	x_tfidf is optional so this function stays backward-compatible if TF-IDF
+	is disabled via --no-tfidf flag.
+	"""
 	sparse.save_npz(processed_dir / f"X_{split_name}_ohe.npz", x_ohe)
 	np.save(processed_dir / f"X_{split_name}_lexical.npy", x_lex)
 	np.save(processed_dir / f"y_{split_name}.npy", y)
 	np.save(processed_dir / f"row_ids_{split_name}.npy", row_ids)
+
+	# [CHANGE 4] Save TF-IDF matrix if provided.
+	# Uses the same .npz sparse format as OHE — TF-IDF matrices are also sparse
+	# (most words are absent from any given example). Saves ~same disk space as OHE.
+	if x_tfidf is not None:
+		sparse.save_npz(processed_dir / f"X_{split_name}_tfidf.npz", x_tfidf)
 
 
 def run_pipeline(
@@ -358,6 +410,7 @@ def run_pipeline(
 	max_article_words: int = 500,
 	max_features: int = 10_000,
 	min_df: int = 2,
+	use_tfidf: bool = True,  # [CHANGE 5] New flag — set False to skip TF-IDF (saves time in quick tests)
 ) -> None:
 	"""Run the full preprocessing pipeline end-to-end."""
 	processed_dir.mkdir(parents=True, exist_ok=True)
@@ -385,11 +438,14 @@ def run_pipeline(
 		if lexical_feature_names is None:
 			lexical_feature_names = lex_names
 
-	# 3) Fit vectorizer on train ONLY (avoids leakage), transform all splits.
+	# 3) Fit OHE vectorizer on train ONLY, transform all splits.
 	vectorizer = build_vectorizer(max_features=max_features, min_df=min_df)
 	x_train_ohe = vectorizer.fit_transform(expanded["train"]["texts"])
-	x_dev_ohe = vectorizer.transform(expanded["dev"]["texts"])
-	x_test_ohe = vectorizer.transform(expanded["test"]["texts"])
+	x_dev_ohe   = vectorizer.transform(expanded["dev"]["texts"])
+	x_test_ohe  = vectorizer.transform(expanded["test"]["texts"])
+
+	# 4) Save OHE vectorizer.
+	joblib.dump(vectorizer, vectorizer_out)
 
 	# 3.5) Compute cosine similarity features for all splits.
 	# These capture semantic overlap between options within each question.
@@ -406,34 +462,68 @@ def run_pipeline(
 	if lexical_feature_names is not None:
 		lexical_feature_names = lexical_feature_names + ["cosine_similarity_within_question", "option_diversity"]
 
-	# 4) Save vectorizer and split artifacts.
-	joblib.dump(vectorizer, vectorizer_out)
+	# [CHANGE 6] Fit TF-IDF vectorizer on train ONLY, transform all splits.
+	# CRITICAL RULE (from TF-IDF manual Chapter 4.4):
+	#   fit_transform() → training texts ONLY.
+	#   transform()     → dev and test texts.
+	# If you accidentally call fit_transform() on dev/test, the vectorizer learns
+	# IDF statistics from those splits, leaking test distribution into features.
+	# That inflates reported metrics without the model actually being better.
+	tfidf_vectorizer = None
+	x_train_tfidf = x_dev_tfidf = x_test_tfidf = None
+
+	if use_tfidf:
+		print("Fitting TF-IDF vectorizer on training texts...")
+		tfidf_vectorizer = build_tfidf_vectorizer(max_features=max_features, min_df=min_df)
+
+		# fit_transform on TRAIN only — this computes IDF from training corpus.
+		x_train_tfidf = tfidf_vectorizer.fit_transform(expanded["train"]["texts"])
+
+		# transform (NOT fit_transform) on dev and test — uses the IDF learned from train.
+		x_dev_tfidf  = tfidf_vectorizer.transform(expanded["dev"]["texts"])
+		x_test_tfidf = tfidf_vectorizer.transform(expanded["test"]["texts"])
+
+		# [CHANGE 7] Save TF-IDF vectorizer alongside OHE vectorizer.
+		# The vectorizer MUST be saved with the classifier — at inference time you need
+		# the exact same vocabulary and IDF weights used during training.
+		tfidf_vectorizer_path = vectorizer_out.parent / "tfidf_vectorizer.pkl"
+		joblib.dump(tfidf_vectorizer, tfidf_vectorizer_path)
+		print(f"TF-IDF vectorizer saved → {tfidf_vectorizer_path}")
+
+	# 5) Save per-split artifacts (OHE + lexical + TF-IDF if computed).
 	save_split_artifacts(
-		processed_dir,
-		"train",
-		x_train_ohe,
-		x_train_lex_combined,
-		expanded["train"]["y"],
-		expanded["train"]["row_ids"],
+		processed_dir, "train",
+		x_train_ohe, x_train_lex_combined, expanded["train"]["y"], expanded["train"]["row_ids"],
+		x_tfidf=x_train_tfidf,  # None if use_tfidf=False
 	)
 	save_split_artifacts(
-		processed_dir,
-		"dev",
-		x_dev_ohe,
-		x_dev_lex_combined,
-		expanded["dev"]["y"],
-		expanded["dev"]["row_ids"],
+		processed_dir, "dev",
+		x_dev_ohe, x_dev_lex_combined, expanded["dev"]["y"], expanded["dev"]["row_ids"],
+		x_tfidf=x_dev_tfidf,
 	)
 	save_split_artifacts(
-		processed_dir,
-		"test",
-		x_test_ohe,
-		x_test_lex_combined,
-		expanded["test"]["y"],
-		expanded["test"]["row_ids"],
+		processed_dir, "test",
+		x_test_ohe, x_test_lex_combined, expanded["test"]["y"], expanded["test"]["row_ids"],
+		x_tfidf=x_test_tfidf,
 	)
 
-	# 5) Save metadata/config for reproducibility.
+	# [CHANGE 8] Add TF-IDF metadata to the saved config so downstream scripts
+	# know whether TF-IDF features exist and where the vectorizer lives.
+	tfidf_meta: Dict = {}
+	if use_tfidf and tfidf_vectorizer is not None:
+		tfidf_meta = {
+			"tfidf_enabled": True,
+			"tfidf_vectorizer_path": str(vectorizer_out.parent / "tfidf_vectorizer.pkl"),
+			"tfidf_vocab_size": int(len(tfidf_vectorizer.vocabulary_)),
+			"tfidf_max_features": max_features,
+			"tfidf_sublinear_tf": True,
+			"tfidf_stop_words": "english",
+			"tfidf_norm": "l2",
+		}
+	else:
+		tfidf_meta = {"tfidf_enabled": False}
+
+	# 6) Save metadata/config for reproducibility.
 	metadata = {
 		"max_article_words": max_article_words,
 		"max_features": max_features,
@@ -449,6 +539,7 @@ def run_pipeline(
 		"raw_dir": str(raw_dir),
 		"processed_dir": str(processed_dir),
 		"vectorizer_path": str(vectorizer_out),
+		**tfidf_meta,  # merge TF-IDF metadata in
 	}
 
 	with (processed_dir / "preprocessing_config.json").open("w", encoding="utf-8") as fh:
@@ -459,7 +550,9 @@ def run_pipeline(
 	print(f"Dev examples:   {metadata['num_dev_examples']:,}")
 	print(f"Test examples:  {metadata['num_test_examples']:,}")
 	print(f"Train positive ratio: {metadata['train_positive_ratio']:.4f}")
-	print(f"Vocabulary size: {metadata['vocab_size']:,}")
+	print(f"OHE Vocabulary size:  {metadata['vocab_size']:,}")
+	if use_tfidf:
+		print(f"TF-IDF Vocabulary size: {tfidf_meta.get('tfidf_vocab_size', 'N/A'):,}")
 	print(f"Saved config: {processed_dir / 'preprocessing_config.json'}")
 
 
@@ -494,13 +587,21 @@ def parse_args() -> argparse.Namespace:
 		"--max-features",
 		type=int,
 		default=10_000,
-		help="Vocabulary size cap for one-hot vectorizer",
+		help="Vocabulary size cap for both one-hot and TF-IDF vectorizers",
 	)
 	parser.add_argument(
 		"--min-df",
 		type=int,
 		default=2,
-		help="Minimum document frequency for one-hot vocabulary",
+		help="Minimum document frequency for vocabulary in both vectorizers",
+	)
+	# [CHANGE 9] New CLI flag: --no-tfidf lets you skip TF-IDF during quick
+	# debugging runs so you're not waiting for it to finish unnecessarily.
+	parser.add_argument(
+		"--no-tfidf",
+		action="store_true",
+		default=False,
+		help="Skip TF-IDF vectorization (faster for quick debugging runs)",
 	)
 	return parser.parse_args()
 
@@ -514,5 +615,5 @@ if __name__ == "__main__":
 		max_article_words=args.max_article_words,
 		max_features=args.max_features,
 		min_df=args.min_df,
+		use_tfidf=not args.no_tfidf,  # [CHANGE 10] Pass flag to pipeline
 	)
-
