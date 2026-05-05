@@ -1,0 +1,60 @@
+# ===== Virtual environments =====
+venv/
+.venv/
+env/
+ENV/
+.env
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ===== Project data (large / regenerable) =====
+data/raw/dev.csv
+data/raw/test.csv
+data/raw/train.csv
+data/raw/val.csv
+data/processed/
+
+# ===== Trained models / artifacts =====
+models/*.joblib
+models/*.pkl
+models/*.bin
+models/*.npz
+models/*.pt
+models/*.pth
+
+# ===== Logs / cache / temp =====
+*.log
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ===== IDE / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ===== Secrets =====
+*.pem
+*.key
+secrets.json
