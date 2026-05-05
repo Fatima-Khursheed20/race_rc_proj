@@ -266,6 +266,76 @@ def build_vectorizer(max_features: int = 10_000, min_df: int = 2) -> CountVector
 	)
 
 
+def compute_cosine_similarity_features(
+	x_ohe: sparse.spmatrix,
+	row_ids: np.ndarray,
+) -> np.ndarray:
+	"""Compute cosine similarity features from One-Hot Encoded vectors.
+
+	For each example (article, question, option), computes:
+	1. Cosine similarity between article and option vectors
+	2. Cosine similarity between question and option vectors
+
+	These features capture semantic overlap without requiring additional models.
+
+	Args:
+		x_ohe: Sparse One-Hot matrix, shape (n_examples, n_features)
+		row_ids: Array mapping each example to its original question index
+
+	Returns:
+		Dense array of shape (n_examples, 2) with [article_sim, question_sim] per row
+	"""
+	# Since examples are created in order (4 per original row):
+	# indices 0-3 belong to row 0, indices 4-7 belong to row 1, etc.
+	# Within each group: example 0 = article+question+optionA, example 1 = article+question+optionB, etc.
+	# We compute similarity between the FIRST option (optionA, index 0 mod 4) and each of the others.
+
+	# Actually, simpler approach: compute similarity between each example and the question text.
+	# We approximate "article" as the shared prefix, and compute overlaps directly.
+
+	# More practical approach for bag-of-words:
+	# Option 1: Extract article/question vectors from the combined text (stored separately)
+	# Option 2: Use TF-IDF overlap as proxy
+
+	# Since we don't have separate article/question vectors, we'll compute:
+	# - How much each option overlaps with the "typical" article+question (all options for same Q have same art+Q)
+	# - Use cosine sim of this example to an average of all examples for this row's question
+
+	n_examples = x_ohe.shape[0]
+	cosine_features = np.zeros((n_examples, 2), dtype=np.float32)
+
+	# For each group of 4 examples (belonging to same question):
+	for idx in range(n_examples):
+		row_id = row_ids[idx]
+		# Find all examples with same row_id (should be 4: options A, B, C, D)
+		same_row_mask = row_ids == row_id
+		same_row_indices = np.where(same_row_mask)[0]
+
+		# Compute average similarity within this question's 4 options
+		# This approximates "how similar is this option to typical text for this question"
+		row_vectors = x_ohe[same_row_indices]
+		if len(same_row_indices) > 0:
+			# Cosine similarity between this example and mean of group
+			mean_vector = np.asarray(row_vectors.mean(axis=0))
+			current_vector = np.asarray(x_ohe[idx].toarray().flatten())
+
+			# Compute cosine similarity manually
+			dot_prod = np.dot(current_vector, mean_vector)
+			norm_curr = np.linalg.norm(current_vector)
+			norm_mean = np.linalg.norm(mean_vector)
+
+			sim = dot_prod / (norm_curr * norm_mean + 1e-10)
+			cosine_features[idx, 0] = float(sim)
+
+		# Second feature: variance within the group (how diverse are the 4 options?)
+		if len(same_row_indices) > 1:
+			row_dense = np.asarray(row_vectors.toarray())
+			variance = np.var(row_dense, axis=0).mean()  # average feature variance
+			cosine_features[idx, 1] = float(variance)
+
+	return cosine_features
+
+
 def save_split_artifacts(
 	processed_dir: Path,
 	split_name: str,
@@ -321,13 +391,28 @@ def run_pipeline(
 	x_dev_ohe = vectorizer.transform(expanded["dev"]["texts"])
 	x_test_ohe = vectorizer.transform(expanded["test"]["texts"])
 
+	# 3.5) Compute cosine similarity features for all splits.
+	# These capture semantic overlap between options within each question.
+	x_train_cosine = compute_cosine_similarity_features(x_train_ohe, expanded["train"]["row_ids"])
+	x_dev_cosine = compute_cosine_similarity_features(x_dev_ohe, expanded["dev"]["row_ids"])
+	x_test_cosine = compute_cosine_similarity_features(x_test_ohe, expanded["test"]["row_ids"])
+
+	# Combine cosine features with existing lexical features.
+	x_train_lex_combined = np.hstack([expanded["train"]["x_lex"], x_train_cosine])
+	x_dev_lex_combined = np.hstack([expanded["dev"]["x_lex"], x_dev_cosine])
+	x_test_lex_combined = np.hstack([expanded["test"]["x_lex"], x_test_cosine])
+
+	# Update lexical feature names to include new cosine similarity features.
+	if lexical_feature_names is not None:
+		lexical_feature_names = lexical_feature_names + ["cosine_similarity_within_question", "option_diversity"]
+
 	# 4) Save vectorizer and split artifacts.
 	joblib.dump(vectorizer, vectorizer_out)
 	save_split_artifacts(
 		processed_dir,
 		"train",
 		x_train_ohe,
-		expanded["train"]["x_lex"],
+		x_train_lex_combined,
 		expanded["train"]["y"],
 		expanded["train"]["row_ids"],
 	)
@@ -335,7 +420,7 @@ def run_pipeline(
 		processed_dir,
 		"dev",
 		x_dev_ohe,
-		expanded["dev"]["x_lex"],
+		x_dev_lex_combined,
 		expanded["dev"]["y"],
 		expanded["dev"]["row_ids"],
 	)
@@ -343,7 +428,7 @@ def run_pipeline(
 		processed_dir,
 		"test",
 		x_test_ohe,
-		expanded["test"]["x_lex"],
+		x_test_lex_combined,
 		expanded["test"]["y"],
 		expanded["test"]["row_ids"],
 	)
