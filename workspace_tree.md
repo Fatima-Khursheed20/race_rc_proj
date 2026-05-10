@@ -1,0 +1,87 @@
+.
+- `confusion_matrix_hints.py`
+- `DELIVERABLES_CHECKLIST.md`
+- `PHASE_7_FINAL_SUMMARY.md`
+- `PHASE_7_IMPLEMENTATION_REPORT.md`
+- `PHASE_7_README.md`
+- `QUICK_START.md`
+- `README.md`
+- `requirements.txt`
+- `smoke_check.py`
+- `test_syntax.py`
+- `train_hints_fast.py`
+- `verify_phase7.py`
+- `distractor_confusion_dev.png`
+- `report/`
+  - `dummy.txt`
+- `data/`
+  - `processed/`
+    - `preprocessing_config.json`
+    - `row_ids_dev.npy`
+    - `row_ids_test.npy`
+    - `row_ids_train.npy`
+    - `X_dev_lexical.npy`
+    - `X_dev_ohe.npz`
+    - `X_dev_tfidf.npz`
+    - `X_test_lexical.npy`
+    - `X_test_ohe.npz`
+    - `X_test_tfidf.npz`
+    - `X_train_lexical.npy`
+    - `X_train_ohe.npz`
+    - `X_train_tfidf.npz`
+    - `y_dev.npy`
+    - `y_test.npy`
+    - `y_train.npy`
+  - `raw/`
+    - `dev.csv`
+    - `test.csv`
+    - `train.csv`
+- `models/`
+  - `model_a/`
+    - `traditional/`
+      - `phase3_all_results.json`
+      - `phase3_comparison_table.csv`
+    - `unsupervised/`
+      - `dummy.txt`
+  - `model_b/`
+    - `distractor/`
+    - `hint_generator/`
+      - `inference_examples.json`
+- `notebooks/`
+  - `EDA.ipynb`
+  - `experiments.ipynb`
+  - `Phase3_Final.ipynb`
+  - `dump/`
+    - `Phase_3_TF_IDF (1).ipynb`
+    - `Phase_3_TF_IDF.ipynb`
+    - `Phase3_Final.ipynb`
+- `plan_markdowns/`
+  - `COLAB_SETUP_GUIDE.md`
+  - `EDA_ANALYSIS_AND_NEXT_STEPS.md`
+  - `PHASE_3_DETAILED.md`
+  - `PHASE_3_EXECUTION_GUIDE.md`
+  - `PHASE_4_DETAILED.md`
+  - `PHASE_4_EXECUTION_GUIDE.md`
+  - `PHASE_6_DETAILED.md`
+  - `PHASE_7_DETAILED.md`
+  - `PROJECT_EXECUTION_PLAN.md`
+- `src/`
+  - `__init__.py`
+  - `distractor_generator.py`
+  - `evaluate_distractor.py`
+  - `evaluate_hints.py`
+  - `evaluate.py`
+  - `hint_generator.py`
+  - `hint_inference_demo.py`
+  - `inference.py`
+  - `interference.py`
+  - `model_a_phase4.py`
+  - `model_a_train.py`
+  - `model_b_train.py`
+  - `preprocessing.py`
+- `tests/`
+  - `test_inference.py`
+- `ui/`
+  - `app.py`
+  - `components/`
+    - `dummy.txt`

@@ -1,7 +1,7 @@
-Model/Split,Accuracy,Macro F1,Precision,Recall,Exact Match
-LR (Dev),0.5662,0.5211,0.2926,0.5183,0.349
-SVM (Dev),0.7491,0.4299,0.2459,0.0017,0.357
-LR (Test),0.5556,0.5104,0.2822,0.5038,0.3389
-SVM (Test),0.7487,0.429,0.1311,0.0009,0.3442
-XGBoost (Dev),0.588,0.5342,0.3026,0.4964,0.3407
-XGBoost (Test),0.583,0.5286,0.2965,0.4869,0.3356
+Model/Split,Accuracy,Macro F1,Exact Match
+LR (Dev),0.5662,0.5211,0.349
+LR (Test),0.5556,0.5104,0.3389
+SVM (Dev),0.7492,0.4294,0.3547
+SVM (Test),0.7491,0.429,0.3447
+XGBoost (Dev),0.5925,0.5401,0.3503
+XGBoost (Test),0.5886,0.5352,0.3429

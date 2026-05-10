@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-05-10T04:00:56.790052",
+  "timestamp": "2026-05-10T20:45:10.018730",
   "phase": 3,
-  "models": {
+  "answer_verification": {
     "lr_dev": {
       "model_name": "LR Combined (Dev)",
       "accuracy": 0.5662417482358297,
@@ -17,24 +17,6 @@
         [
           4232,
           4554
-        ]
-      ]
-    },
-    "svm_dev": {
-      "model_name": "SVM (Dev)",
-      "accuracy": 0.7491179148645573,
-      "macro_f1": 0.4299437281437746,
-      "precision": 0.2459016393442623,
-      "recall": 0.0017072615524698384,
-      "exact_match": 0.35704529933985885,
-      "confusion_matrix": [
-        [
-          26312,
-          46
-        ],
-        [
-          8771,
-          15
         ]
       ]
     },
@@ -56,59 +38,120 @@
         ]
       ]
     },
-    "svm_test": {
-      "model_name": "SVM (Test)",
-      "accuracy": 0.7487198452435139,
-      "macro_f1": 0.4290384642454751,
-      "precision": 0.13114754098360656,
-      "recall": 0.0009103322712790169,
-      "exact_match": 0.34421939007737823,
+    "svm_dev": {
+      "model_name": "SVM (Dev)",
+      "accuracy": 0.7492032779421808,
+      "macro_f1": 0.4294198150783549,
+      "precision": 0.20833333333333334,
+      "recall": 0.0011381743683132257,
+      "exact_match": 0.35465513316640107,
       "confusion_matrix": [
         [
-          26311,
-          53
+          26320,
+          38
         ],
         [
-          8780,
-          8
+          8776,
+          10
+        ]
+      ]
+    },
+    "svm_test": {
+      "model_name": "SVM (Test)",
+      "accuracy": 0.7490612198452435,
+      "macro_f1": 0.4290406887039734,
+      "precision": 0.14893617021276595,
+      "recall": 0.0007965407373691397,
+      "exact_match": 0.34467455621301774,
+      "confusion_matrix": [
+        [
+          26324,
+          40
+        ],
+        [
+          8781,
+          7
         ]
       ]
     },
     "xgboost_dev": {
-      "model_name": "XGBoost Lexical (Dev)",
-      "accuracy": 0.588037787389028,
-      "macro_f1": 0.534240702660902,
-      "precision": 0.3025530734008603,
-      "recall": 0.49635784202139765,
-      "exact_match": 0.3406555884361484,
+      "model_name": "XGBoost (Lexical + Cosine, Dev)",
+      "accuracy": 0.5924766674254496,
+      "macro_f1": 0.5401408743065554,
+      "precision": 0.3091297752034202,
+      "recall": 0.5102435693148191,
+      "exact_match": 0.3503300705668108,
       "confusion_matrix": [
         [
-          16305,
-          10053
+          16339,
+          10019
         ],
         [
-          4425,
-          4361
+          4303,
+          4483
         ]
       ]
     },
     "xgboost_test": {
-      "model_name": "XGBoost Lexical (Test)",
-      "accuracy": 0.5829540282203004,
-      "macro_f1": 0.5286240673054984,
-      "precision": 0.29653499653499654,
-      "recall": 0.48691397360036415,
-      "exact_match": 0.3355712335002276,
+      "model_name": "XGBoost (Lexical + Cosine, Test)",
+      "accuracy": 0.5885582612653618,
+      "macro_f1": 0.535211801492257,
+      "precision": 0.30370114147353855,
+      "recall": 0.4995448338643605,
+      "exact_match": 0.3428538916704597,
       "confusion_matrix": [
         [
-          16213,
-          10151
+          16299,
+          10065
         ],
         [
-          4509,
-          4279
+          4398,
+          4390
         ]
       ]
+    }
+  },
+  "nlp_metrics_answer_verification": {
+    "BLEU": {
+      "LR": 0.7999,
+      "SVM": 0.7999,
+      "XGBoost": 0.7999
+    },
+    "ROUGE-1": {
+      "LR": 0.9997,
+      "SVM": 0.9997,
+      "XGBoost": 0.9997
+    },
+    "ROUGE-2": {
+      "LR": 0.8814,
+      "SVM": 0.8814,
+      "XGBoost": 0.8814
+    },
+    "ROUGE-L": {
+      "LR": 0.9997,
+      "SVM": 0.9997,
+      "XGBoost": 0.9997
+    },
+    "METEOR": {
+      "LR": 0.9287,
+      "SVM": 0.9287,
+      "XGBoost": 0.9287
+    }
+  },
+  "question_generation_nlp": {
+    "template_only": {
+      "BLEU": 0.0142,
+      "ROUGE-1": 0.1372,
+      "ROUGE-2": 0.0263,
+      "ROUGE-L": 0.1209,
+      "METEOR": 0.089
+    },
+    "ml_ranker": {
+      "BLEU": 0.0123,
+      "ROUGE-1": 0.1313,
+      "ROUGE-2": 0.0231,
+      "ROUGE-L": 0.1145,
+      "METEOR": 0.1046
     }
   }
 }
