@@ -1,0 +1,30 @@
+{
+  "pca_n_components": 50,
+  "labeled_fraction": 0.1,
+  "kmeans": {},
+  "gmm": {},
+  "label_propagation": {
+    "best_k_neighbors": 3,
+    "val_accuracy": 0.6753357614386524,
+    "val_macro_f1": 0.4961531644168514,
+    "val_precision": 0.25703703703703706,
+    "val_recall": 0.15797860232187572,
+    "training_time_s": 9.970095872879028
+  },
+  "baselines": {
+    "supervised_small": {
+      "label_fraction": 0.1,
+      "Accuracy": 0.5623150466651491,
+      "Macro F1": 0.5112678027538449,
+      "Precision": 0.28013333333333335,
+      "Recall": 0.4782608695652174
+    },
+    "supervised_full": {
+      "label_fraction": 1.0,
+      "Accuracy": 0.5719895287958116,
+      "Macro F1": 0.5189458965841915,
+      "Precision": 0.28703703703703703,
+      "Recall": 0.4798543136808559
+    }
+  }
+}

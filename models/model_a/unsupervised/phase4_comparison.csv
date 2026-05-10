@@ -1,0 +1,4 @@
+Method,Type,Silhouette,Purity,NMI,Model Metric,Val Macro F1,Val Accuracy,Train Time (s)
+Label Propagation (10% labels),Semi-Supervised,—,—,—,Val F1=0.4962,0.4962,0.6753,9.97
+Supervised LR (10% labels),Supervised (baseline),—,—,—,Val F1=0.5113,0.5113,0.5623,—
+Supervised LR (100% labels) — upper bound,Supervised (upper bound),—,—,—,Val F1=0.5189,0.5189,0.572,—
