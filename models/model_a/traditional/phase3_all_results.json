@@ -1,0 +1,114 @@
+{
+  "timestamp": "2026-05-10T04:00:56.790052",
+  "phase": 3,
+  "models": {
+    "lr_dev": {
+      "model_name": "LR Combined (Dev)",
+      "accuracy": 0.5662417482358297,
+      "macro_f1": 0.5210807208887094,
+      "precision": 0.292560709238083,
+      "recall": 0.518324607329843,
+      "exact_match": 0.348964261324835,
+      "confusion_matrix": [
+        [
+          15346,
+          11012
+        ],
+        [
+          4232,
+          4554
+        ]
+      ]
+    },
+    "svm_dev": {
+      "model_name": "SVM (Dev)",
+      "accuracy": 0.7491179148645573,
+      "macro_f1": 0.4299437281437746,
+      "precision": 0.2459016393442623,
+      "recall": 0.0017072615524698384,
+      "exact_match": 0.35704529933985885,
+      "confusion_matrix": [
+        [
+          26312,
+          46
+        ],
+        [
+          8771,
+          15
+        ]
+      ]
+    },
+    "lr_test": {
+      "model_name": "LR Combined (Test)",
+      "accuracy": 0.555587164314975,
+      "macro_f1": 0.5104294059701521,
+      "precision": 0.28219020907700154,
+      "recall": 0.5037551206190259,
+      "exact_match": 0.33887118798361404,
+      "confusion_matrix": [
+        [
+          15103,
+          11261
+        ],
+        [
+          4361,
+          4427
+        ]
+      ]
+    },
+    "svm_test": {
+      "model_name": "SVM (Test)",
+      "accuracy": 0.7487198452435139,
+      "macro_f1": 0.4290384642454751,
+      "precision": 0.13114754098360656,
+      "recall": 0.0009103322712790169,
+      "exact_match": 0.34421939007737823,
+      "confusion_matrix": [
+        [
+          26311,
+          53
+        ],
+        [
+          8780,
+          8
+        ]
+      ]
+    },
+    "xgboost_dev": {
+      "model_name": "XGBoost Lexical (Dev)",
+      "accuracy": 0.588037787389028,
+      "macro_f1": 0.534240702660902,
+      "precision": 0.3025530734008603,
+      "recall": 0.49635784202139765,
+      "exact_match": 0.3406555884361484,
+      "confusion_matrix": [
+        [
+          16305,
+          10053
+        ],
+        [
+          4425,
+          4361
+        ]
+      ]
+    },
+    "xgboost_test": {
+      "model_name": "XGBoost Lexical (Test)",
+      "accuracy": 0.5829540282203004,
+      "macro_f1": 0.5286240673054984,
+      "precision": 0.29653499653499654,
+      "recall": 0.48691397360036415,
+      "exact_match": 0.3355712335002276,
+      "confusion_matrix": [
+        [
+          16213,
+          10151
+        ],
+        [
+          4509,
+          4279
+        ]
+      ]
+    }
+  }
+}
