@@ -58,3 +58,4 @@ Thumbs.db
 *.pem
 *.key
 secrets.json
+models/model_b/distractor/distractor_ranker.pkl
