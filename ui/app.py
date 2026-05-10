@@ -1,12 +1,20 @@
 import csv
 import io
+import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from sklearn.metrics import classification_report
+
+    _SK_ANALYTICS = True
+except ImportError:
+    _SK_ANALYTICS = False
 
 # Project root → import ``src.inference``
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +27,7 @@ APP_TITLE = "RACE Quiz Lab"
 PRIMARY = "#2563eb"
 SURFACE = "#f8fafc"
 CARD_BORDER = "#e2e8f0"
+EVAL_SNAPSHOT_DIR = ROOT / "report" / "eval_snapshots"
 
 
 def inject_styles():
@@ -96,17 +105,146 @@ def add_log(entry: Dict[str, Any]):
     st.session_state.session_log.append(entry)
 
 
+def load_eval_snapshot(filename: str) -> Optional[Dict[str, Any]]:
+    p = EVAL_SNAPSHOT_DIR / filename
+    if not p.is_file():
+        return None
+    with p.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
 def export_logs_csv() -> None:
     if not st.session_state.session_log:
         st.info("No logs yet")
         return
     output = io.StringIO()
-    keys = list(st.session_state.session_log[0].keys())
-    writer = csv.DictWriter(output, fieldnames=keys)
+    keys = sorted({k for row in st.session_state.session_log for k in row.keys()})
+    writer = csv.DictWriter(output, fieldnames=keys, extrasaction="ignore")
     writer.writeheader()
     for row in st.session_state.session_log:
-        writer.writerow(row)
+        flat = {}
+        for k in keys:
+            v = row.get(k)
+            if v is None:
+                flat[k] = ""
+            elif isinstance(v, (dict, list)):
+                flat[k] = json.dumps(v, ensure_ascii=False)
+            else:
+                flat[k] = v
+        writer.writerow(flat)
     st.download_button("Download session log (CSV)", output.getvalue(), file_name="session_log.csv")
+
+
+def _session_model_a_vectors(
+    window: List[Dict[str, Any]],
+) -> Tuple[List[int], List[int]]:
+    y_true: List[int] = []
+    y_pred: List[int] = []
+    for e in window:
+        ci = e.get("correct_index")
+        pi = e.get("predicted_correct_index")
+        if ci is not None and pi is not None:
+            y_true.append(int(ci))
+            y_pred.append(int(pi))
+    return y_true, y_pred
+
+
+def screen_analytics():
+    st.subheader("4 · Developer / analytics")
+    inner = st.tabs(["Session (last N)", "Offline · Model B snapshot", "Session log"])
+
+    with inner[0]:
+        log = st.session_state.session_log
+        n_log = len(log)
+        if n_log == 0:
+            st.info("Generate quizzes from **Article** to populate Model A and latency series.")
+        else:
+            if n_log == 1:
+                N = 1
+                st.caption("Showing the only session entry (last **1** inference).")
+            else:
+                N = st.slider(
+                    "Last N inferences (quiz generations)",
+                    1,
+                    n_log,
+                    value=min(50, n_log),
+                    help="Each entry is one pipeline run (Model A + distractors + hints).",
+                )
+            window = log[-N:]
+
+            st.markdown("##### Model A (predicted option vs gold)")
+            y_true, y_pred = _session_model_a_vectors(window)
+            if not y_true:
+                st.caption("No rows with both `correct_index` and `predicted_correct_index`.")
+            elif not _SK_ANALYTICS:
+                st.warning("Install `scikit-learn` for the classification report.")
+            else:
+                labels = [0, 1, 2, 3]
+                names = ["A", "B", "C", "D"]
+                rep = classification_report(
+                    y_true,
+                    y_pred,
+                    labels=labels,
+                    target_names=names,
+                    zero_division=0,
+                )
+                st.code(rep, language="text")
+
+            answered = [e for e in window if e.get("was_correct") is not None]
+            if answered:
+                acc_u = sum(1 for e in answered if e["was_correct"]) / len(answered)
+                st.metric("Learner accuracy (submitted checks, this window)", f"{acc_u:.1%}")
+            else:
+                st.caption("Use **Check answer** on the Quiz tab to record learner correctness.")
+
+            st.markdown("##### Latency (ms per pipeline run)")
+            lat_rows = [
+                {"i": i + 1, "latency_ms": e["latency_ms"]}
+                for i, e in enumerate(window)
+                if e.get("latency_ms") is not None
+            ]
+            if lat_rows:
+                s = pd.Series([r["latency_ms"] for r in lat_rows])
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Mean", f"{s.mean():.0f} ms")
+                c2.metric("p50", f"{s.median():.0f} ms")
+                c3.metric("Max", f"{s.max():.0f} ms")
+                st.line_chart(pd.DataFrame(lat_rows).set_index("i")["latency_ms"])
+            else:
+                st.caption("No latency values in this window.")
+
+    with inner[1]:
+        snap = load_eval_snapshot("model_b_distractor.json")
+        if not snap:
+            st.warning(
+                f"Missing `{EVAL_SNAPSHOT_DIR / 'model_b_distractor.json'}`. "
+                "Add a snapshot (e.g. from saved confusion matrices) for the dashboard."
+            )
+        else:
+            st.caption(snap.get("source", ""))
+            for split in ("dev", "test"):
+                block = snap.get(split)
+                if not isinstance(block, dict):
+                    continue
+                st.markdown(f"**{split.upper()}** · ranker binary metrics (from confusion matrix)")
+                m = block
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Accuracy", f"{m.get('accuracy', 0):.4f}")
+                c2.metric("Precision (distractor)", f"{m.get('precision_distractor', 0):.4f}")
+                c3.metric("Recall (distractor)", f"{m.get('recall_distractor', 0):.4f}")
+                c4.metric("F1 (distractor)", f"{m.get('f1_distractor', 0):.4f}")
+            note = snap.get("ranking_at_3_note")
+            if note:
+                st.info(note)
+            with st.expander("Raw JSON"):
+                st.json(snap)
+
+    with inner[2]:
+        st.write(f"Entries: **{len(st.session_state.session_log)}**")
+        logs = st.session_state.session_log[::-1]
+        if logs:
+            st.dataframe(logs[:40], use_container_width=True, hide_index=True)
+        export_logs_csv()
 
 
 def render_model_pills(flags: Optional[Dict[str, Any]]):
@@ -226,6 +364,15 @@ def screen_input():
     result["latency_ms"] = latency
     st.session_state.last_result = result
     st.session_state.hints_opened = 0
+    probs = result.get("option_probs")
+    probs_json = None
+    if probs is not None:
+        try:
+            probs_json = json.dumps([float(x) for x in probs])
+        except (TypeError, ValueError):
+            probs_json = None
+    ci = result.get("correct_index")
+    pci = result.get("predicted_correct_index")
     add_log(
         {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -233,6 +380,12 @@ def screen_input():
             "question": result.get("question"),
             "quiz_mode": result.get("quiz_mode"),
             "latency_ms": round(latency, 1),
+            "correct_index": ci,
+            "predicted_correct_index": pci,
+            "verification_backend": result.get("verification_backend"),
+            "model_a_match": pci == ci if pci is not None and ci is not None else None,
+            "option_probs_json": probs_json,
+            "user_choice_index": None,
             "was_correct": None,
         }
     )
@@ -278,6 +431,7 @@ def screen_quiz():
         correct_idx = res.get("correct_index", 0)
         was_correct = choice_idx == correct_idx
         if st.session_state.session_log:
+            st.session_state.session_log[-1]["user_choice_index"] = int(choice_idx)
             st.session_state.session_log[-1]["was_correct"] = was_correct
         if was_correct:
             st.success("Correct — nice work.")
@@ -313,15 +467,6 @@ def screen_hints():
         st.info(f"Answer: **{res['options'][ci]}**")
 
 
-def screen_dashboard():
-    st.subheader("4 · Session log")
-    st.write(f"Entries: **{len(st.session_state.session_log)}**")
-    logs = st.session_state.session_log[::-1]
-    if logs:
-        st.dataframe(logs[:25], use_container_width=True, hide_index=True)
-    export_logs_csv()
-
-
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
     inject_styles()
@@ -330,7 +475,7 @@ def main():
     st.caption("Reading comprehension quiz — integrated with your trained traditional models.")
     sidebar()
 
-    tab_labels = ["Article", "Quiz", "Hints", "Log"]
+    tab_labels = ["Article", "Quiz", "Hints", "Analytics"]
     tabs = st.tabs(tab_labels)
     with tabs[0]:
         screen_input()
@@ -339,7 +484,7 @@ def main():
     with tabs[2]:
         screen_hints()
     with tabs[3]:
-        screen_dashboard()
+        screen_analytics()
 
 
 if __name__ == "__main__":

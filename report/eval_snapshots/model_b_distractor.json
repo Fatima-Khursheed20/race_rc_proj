@@ -1,0 +1,27 @@
+{
+  "task": "Model B · distractor ranker · binary verification on expanded candidates",
+  "source": "Counts read from distractor_confusion_dev.png and distractor_confusion_test.png (evaluate_distractor.py plots). Classes: 0 = Not distractor, 1 = Distractor.",
+  "plots": {
+    "dev": "distractor_confusion_dev.png",
+    "test": "distractor_confusion_test.png"
+  },
+  "dev": {
+    "confusion_matrix": [[80000, 414782], [394, 25952]],
+    "labels": ["not_distractor", "distractor"],
+    "n_samples": 521128,
+    "accuracy": 0.2031995202704137,
+    "precision_distractor": 0.05890682232253527,
+    "recall_distractor": 0.9850482061793054,
+    "f1_distractor": 0.11112119531406896
+  },
+  "test": {
+    "confusion_matrix": [[78278, 417774], [372, 25982]],
+    "labels": ["not_distractor", "distractor"],
+    "n_samples": 522406,
+    "accuracy": 0.19957619016550422,
+    "precision_distractor": 0.05854938335319482,
+    "recall_distractor": 0.9858875328223419,
+    "f1_distractor": 0.11038968698417708
+  },
+  "ranking_at_3_note": "Precision@3 / Recall@3 / F1@3 are not determined by the 2×2 matrix alone. Re-run `python src/evaluate_distractor.py --no-plots` to refresh; project report cites test F1@3 ≈ 0.54."
+}
